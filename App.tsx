@@ -1,0 +1,1010 @@
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { HashRouter, Routes, Route, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Home, Plus, FileText, BarChart2, Users, Settings, LogOut, ChevronDown, Trash2, Edit, Move, Eye, Share2, MoreHorizontal, AlertTriangle, Wand2, Loader2, Sparkles, GripVertical, Check, MessageSquare, CheckSquare, Type as TypeIcon, Tally5, Star, AlignLeft, Calendar, Upload, Grip, List as ListIcon, Shield, User as UserIcon } from 'lucide-react';
+import { Survey, Question, QuestionType, SurveyResponse, User, Role } from './types';
+import { QUESTION_TYPE_CONFIG, ROLE_CONFIG } from './constants';
+import { generateSurveyFromPrompt } from './services/geminiService';
+import * as api from './services/api';
+
+
+// --- REUSABLE UI COMPONENTS ---
+
+const Icon = ({ name, className = '' }: { name: React.ElementType; className?: string }) => {
+    const LucideIcon = name;
+    return <LucideIcon className={`h-5 w-5 ${className}`} />;
+};
+
+const Button = React.forwardRef<HTMLButtonElement, { children: React.ReactNode; onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void; variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'link'; size?: 'sm' | 'md' | 'lg'; className?: string; type?: 'button' | 'submit'; disabled?: boolean }>(
+  ({ children, onClick, variant = 'primary', size = 'md', className = '', type = 'button', disabled = false }, ref) => {
+    const baseClasses = 'inline-flex items-center justify-center rounded-lg font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60 disabled:pointer-events-none';
+    const sizeClasses = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-6 py-3 text-base' };
+    const variantClasses = {
+        primary: 'bg-primary-600 text-white hover:bg-primary-700 focus-visible:ring-primary-500 shadow-sm',
+        secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus-visible:ring-primary-500',
+        danger: 'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500 shadow-sm',
+        ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-primary-500',
+        link: 'bg-transparent text-primary-600 hover:underline'
+    };
+    return <button ref={ref} type={type} onClick={onClick} className={`${baseClasses} ${sizeClasses[size]} ${variantClasses[variant]} ${className}`} disabled={disabled}>{children}</button>;
+});
+
+const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>((props, ref) => (
+    <input ref={ref} {...props} className={`block w-full rounded-md border-slate-300 bg-white text-slate-900 shadow-sm focus:border-primary-400 focus:ring focus:ring-primary-200 focus:ring-opacity-50 sm:text-sm transition-shadow placeholder:text-slate-400 ${props.className || ''}`} />
+));
+
+const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>((props, ref) => (
+    <textarea ref={ref} {...props} className={`block w-full rounded-md border-slate-300 bg-white text-slate-900 shadow-sm focus:border-primary-400 focus:ring focus:ring-primary-200 focus:ring-opacity-50 sm:text-sm transition-shadow placeholder:text-slate-400 ${props.className || ''}`} />
+));
+
+const Card = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
+    <div className={`bg-white rounded-lg border border-slate-200 ${className}`}>
+        {children}
+    </div>
+);
+
+const DropdownMenu: React.FC<{ trigger: React.ReactNode, children: React.ReactNode }> = ({ trigger, children }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    return (
+        <div className="relative" ref={menuRef}>
+            <div onClick={() => setIsOpen(!isOpen)} className="cursor-pointer">
+                {trigger}
+            </div>
+            {isOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 z-20 py-1">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+};
+const DropdownMenuItem: React.FC<{ icon: React.ElementType, children: React.ReactNode, onClick: () => void, className?: string }> = ({ icon, children, onClick, className }) => (
+    <button onClick={onClick} className={`w-full text-left flex items-center px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 ${className}`}>
+        <Icon name={icon} className="mr-3 h-4 w-4" />
+        {children}
+    </button>
+);
+
+
+const AIGenerateModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onGenerate: (surveyData: { title: string; description: string; questions: Omit<Question, 'id'>[] }) => void;
+}> = ({ isOpen, onClose, onGenerate }) => {
+  const [prompt, setPrompt] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    if (!prompt) {
+      setError('Please enter a topic for your survey.');
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const surveyData = await generateSurveyFromPrompt(prompt);
+      onGenerate(surveyData);
+      onClose();
+      setPrompt('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'An unknown error occurred.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  useEffect(() => {
+      if(!isOpen) {
+        setPrompt('');
+        setError(null);
+        setIsLoading(false);
+      }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-60 transition-opacity">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg m-4 transform transition-all">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4">
+          <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+            <Icon name={Sparkles} className="text-primary-500 h-6 w-6" />
+            Generate Survey with AI
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 rounded-full p-1 focus:outline-none focus:ring-2 focus:ring-slate-400">&times;</button>
+        </div>
+        <p className="text-slate-600 mb-4 text-sm">Describe the survey you want to create. For example: "A weekly employee satisfaction pulse survey about work-life balance and management support."</p>
+        <Textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Enter survey topic..."
+          rows={4}
+          disabled={isLoading}
+        />
+        {error && <p className="text-red-500 text-sm mt-2 flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" /> {error}</p>}
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={isLoading}>Cancel</Button>
+          <Button onClick={handleGenerate} disabled={isLoading || !prompt}>
+            {isLoading ? (
+              <> <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating... </>
+            ) : 'Generate Survey'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// --- LAYOUT COMPONENTS ---
+
+const Logo = () => (
+    <Link to="/" className="flex items-center justify-center h-16 border-b border-slate-200/80 shrink-0 px-4">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-primary-600">
+            <path d="M22,7.4c-0.4-1.2-1.2-2.2-2.3-2.8c-1.1-0.6-2.4-0.8-3.7-0.6c-2.3,0.4-4.2,2.2-4.7,4.5c-0.1,0.5-0.2,1-0.2,1.6 c0,0.4,0,0.8,0.1,1.2c-1.3-0.9-2.8-1.5-4.4-1.7C5.1,9.3,3.5,10,2.6,11.3c-0.9,1.3-1,3-0.3,4.5c0.8,1.5,2.3,2.5,4,2.7 c0.8,0.1,1.6,0,2.3-0.2c0.2,0.8,0.5,1.6,0.9,2.3c0.4,0.7,0.8,1.3,1.3,1.9c0.5,0.6,1.2,1,1.9,1.2c0.7,0.2,1.5,0.1,2.2-0.2 c1.4-0.6,2.4-2,2.6-3.5c0.1-0.8,0-1.6-0.3-2.4c1.1,0.2,2.2,0.1,3.2-0.2c1.7-0.5,3-1.8,3.4-3.5C22.2,9.7,22.2,8.5,22,7.4z M17,11 c-1.1,0-2-0.9-2-2s0.9-2,2-2s2,0.9,2,2S18.1,11,17,11z"/>
+        </svg>
+        <span className="text-xl font-bold text-slate-800 ml-2 tracking-tight">SurveySparrow</span>
+    </Link>
+);
+
+const Sidebar: React.FC<{navOpen: boolean, setNavOpen: (open: boolean) => void, currentUser: User | null}> = ({navOpen, setNavOpen, currentUser}) => {
+    const location = useLocation();
+
+    const NavLink = ({ to, icon, children }: { to: string; icon: React.ElementType; children: React.ReactNode }) => {
+        const isActive = location.pathname === to || (to === '/analytics' && location.pathname.startsWith('/survey/'));
+        return (
+            <Link to={to} onClick={() => setNavOpen(false)} className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-md transition-colors ${isActive ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}>
+                <Icon name={icon} className={`mr-3 h-5 w-5 ${isActive ? 'text-primary-600' : 'text-slate-500'}`} />
+                <span>{children}</span>
+            </Link>
+        );
+    };
+
+    return (
+        <>
+            <aside className={`fixed z-30 inset-y-0 left-0 bg-white w-64 border-r border-slate-200/80 flex flex-col transform ${navOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:relative md:translate-x-0`}>
+                <Logo />
+                <nav className="p-4 space-y-1 flex-1">
+                    <NavLink to="/" icon={Home}>Dashboard</NavLink>
+                    <NavLink to="/responses" icon={MessageSquare}>Responses</NavLink>
+                    <NavLink to="/analytics" icon={BarChart2}>Analytics</NavLink>
+                    <NavLink to="/users" icon={Users}>Users</NavLink>
+                    <NavLink to="/settings" icon={Settings}>Settings</NavLink>
+                </nav>
+                <div className="p-4 border-t border-slate-200/80">
+                   {currentUser ? (
+                     <div className="flex items-center group p-2">
+                        <img className="h-10 w-10 rounded-full" src={currentUser.profilePictureUrl} alt="User" />
+                        <div className="ml-3">
+                            <p className="text-sm font-semibold text-slate-800">{currentUser.name}</p>
+                            <p className="text-xs text-slate-500 capitalize">{currentUser.role}</p>
+                        </div>
+                    </div>
+                   ) : (
+                    <div className="h-14"></div> // Placeholder for loading
+                   )}
+                </div>
+            </aside>
+            {navOpen && <div onClick={() => setNavOpen(false)} className="fixed inset-0 bg-black/20 z-20 md:hidden" />}
+        </>
+    );
+};
+
+const Header: React.FC<{onNavToggle: () => void}> = ({onNavToggle}) => {
+    return (
+        <header className="sticky top-0 z-10 flex items-center justify-between h-16 px-4 bg-white/80 backdrop-blur-lg border-b border-slate-200/80 md:px-6">
+            <button onClick={onNavToggle} className="text-slate-500 md:hidden -ml-2">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+            </button>
+            <div className="flex-1"></div>
+            <div className="flex items-center gap-4">
+                 <Button variant="ghost" size="sm" className="!rounded-full !p-2 h-9 w-9">
+                    <Icon name={LogOut}/>
+                </Button>
+            </div>
+        </header>
+    );
+};
+
+// --- PAGE COMPONENTS ---
+
+const Dashboard: React.FC = () => {
+    const navigate = useNavigate();
+    const [surveys, setSurveys] = useState<Survey[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isAIGenerateOpen, setIsAIGenerateOpen] = useState(false);
+
+    useEffect(() => {
+        setIsLoading(true);
+        api.getSurveys().then(data => {
+            setSurveys(data);
+            setIsLoading(false);
+        });
+    }, []);
+
+    const handleCreateSurvey = async () => {
+        const newSurvey = await api.createSurvey({
+            title: 'Untitled Survey', description: '', status: 'draft', questions: [],
+        });
+        navigate(`/survey/${newSurvey.id}/edit`);
+    };
+
+    const handleAIGenerate = async (data: { title: string, description: string, questions: Omit<Question, 'id'>[] }) => {
+        const newSurvey = await api.createSurvey({
+            ...data,
+            status: 'draft',
+            questions: data.questions.map(q => ({...q, id: String(Math.random())})),
+        });
+        navigate(`/survey/${newSurvey.id}/edit`);
+    }
+    
+    const handleDeleteSurvey = async (id: string) => {
+        if(window.confirm('Are you sure you want to delete this survey? This action cannot be undone.')){
+            await api.deleteSurvey(id);
+            setSurveys(prev => prev.filter(s => s.id !== id));
+        }
+    };
+
+    const totalResponses = useMemo(() => surveys.reduce((acc, s) => acc + s.responsesCount, 0), [surveys]);
+
+    const statusColors: Record<Survey['status'], string> = { published: 'bg-green-100 text-green-800', draft: 'bg-yellow-100 text-yellow-800', closed: 'bg-slate-100 text-slate-800' };
+
+    const StatCard = ({ title, value, icon }: { title: string, value: string | number, icon: React.ElementType }) => (
+      <Card className="p-5 flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500">{title}</p>
+          <p className="text-3xl font-bold text-slate-800 mt-1">{value}</p>
+        </div>
+        <div className="bg-primary-50 p-2.5 rounded-lg">
+          <Icon name={icon} className="h-6 w-6 text-primary-600" />
+        </div>
+      </Card>
+    );
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-6">
+                <div>
+                    <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
+                    <p className="text-slate-500 mt-1">Welcome back, Jane! Here's an overview of your surveys.</p>
+                </div>
+                <div className="flex gap-2">
+                    <Button onClick={() => setIsAIGenerateOpen(true)}> <Icon name={Wand2} className="mr-2 h-4 w-4" /> Create with AI </Button>
+                    <Button variant="secondary" onClick={handleCreateSurvey}> <Icon name={Plus} className="mr-2 h-4 w-4" /> New Survey </Button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <StatCard title="Total Surveys" value={surveys.length} icon={FileText} />
+              <StatCard title="Total Responses" value={totalResponses} icon={MessageSquare} />
+              <StatCard title="Active Surveys" value={surveys.filter(s => s.status === 'published').length} icon={CheckSquare} />
+            </div>
+            
+            <Card>
+                <div className="p-5 border-b border-slate-200">
+                    <h2 className="font-semibold text-slate-800">Recent Surveys</h2>
+                </div>
+                {isLoading ? (
+                    <div className="p-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-400" /></div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                    <th className="text-left font-semibold p-4">Title</th>
+                                    <th className="text-left font-semibold p-4">Status</th>
+                                    <th className="text-left font-semibold p-4">Responses</th>
+                                    <th className="text-left font-semibold p-4">Created</th>
+                                    <th className="p-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {surveys.map(survey => (
+                                    <tr key={survey.id} className="border-b border-slate-200 last:border-b-0">
+                                        <td className="p-4 font-medium text-slate-800">{survey.title}</td>
+                                        <td className="p-4">
+                                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${statusColors[survey.status]}`}>
+                                              {survey.status.charAt(0).toUpperCase() + survey.status.slice(1)}
+                                          </span>
+                                        </td>
+                                        <td className="p-4 text-slate-600">{survey.responsesCount}</td>
+                                        <td className="p-4 text-slate-600">{new Date(survey.createdAt).toLocaleDateString()}</td>
+                                        <td className="p-4 text-right">
+                                            <DropdownMenu trigger={<Button variant="ghost" size="sm" className="!px-2"><MoreHorizontal className="h-4 w-4" /></Button>}>
+                                                <DropdownMenuItem icon={Edit} onClick={() => navigate(`/survey/${survey.id}/edit`)}>Edit</DropdownMenuItem>
+                                                <DropdownMenuItem icon={BarChart2} onClick={() => navigate(`/survey/${survey.id}/analytics`)}>Analytics</DropdownMenuItem>
+                                                <DropdownMenuItem icon={Trash2} onClick={() => handleDeleteSurvey(survey.id)} className="text-red-600">Delete</DropdownMenuItem>
+                                            </DropdownMenu>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+
+            <AIGenerateModal isOpen={isAIGenerateOpen} onClose={() => setIsAIGenerateOpen(false)} onGenerate={handleAIGenerate} />
+        </div>
+    );
+};
+
+const SurveyBuilder: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    const navigate = useNavigate();
+    const [survey, setSurvey] = useState<Survey | null>(null);
+    const [activeTab, setActiveTab] = useState('editor');
+    const [isPreviewing, setIsPreviewing] = useState(false);
+
+    useEffect(() => {
+        if (id) {
+            api.getSurvey(id).then(data => {
+                if (data) {
+                    setSurvey(data);
+                } else {
+                    navigate('/'); // Survey not found
+                }
+            });
+        }
+    }, [id, navigate]);
+    
+    const updateSurvey = useCallback(async (updatedProps: Partial<Survey>) => {
+        if (!survey) return;
+        setSurvey(prev => prev ? { ...prev, ...updatedProps } : null); // Optimistic update
+        await api.updateSurvey(survey.id, updatedProps);
+    }, [survey]);
+
+    const addQuestion = (type: QuestionType) => {
+        if (!survey) return;
+        const newQuestion: Question = {
+            id: String(Date.now()), type, title: `New ${QUESTION_TYPE_CONFIG[type].name} Question`, isRequired: false,
+            ...(type === QuestionType.SingleChoice || type === QuestionType.MultipleChoice || type === QuestionType.Dropdown ? { options: [{ id: '1', label: 'Option 1' }] } : {}),
+            ...(type === QuestionType.Rating ? { scale: 5 } : {}),
+            ...(type === QuestionType.Likert ? { statements: ['Statement 1'], choices: ['Agree', 'Disagree'] } : {}),
+            ...(type === QuestionType.Matrix ? { rows: [{ id: 'r1', label: 'Row 1' }], columns: [{ id: 'c1', label: 'Column 1' }] } : {}),
+        };
+        updateSurvey({ questions: [...survey.questions, newQuestion] });
+    };
+
+    const updateQuestion = (qId: string, updatedProps: Partial<Question>) => {
+        if (!survey) return;
+        const updatedQuestions = survey.questions.map(q => q.id === qId ? { ...q, ...updatedProps } : q);
+        updateSurvey({ questions: updatedQuestions });
+    };
+
+    const deleteQuestion = (qId: string) => {
+        if (!survey) return;
+        updateSurvey({ questions: survey.questions.filter(q => q.id !== qId) });
+    };
+
+    if (!survey) {
+        return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" /></div>;
+    }
+
+    if (isPreviewing) {
+        return <SurveyPreviewPage survey={survey} onExitPreview={() => setIsPreviewing(false)} />;
+    }
+
+    return (
+        <div className="flex flex-col h-full bg-slate-100">
+            <header className="flex-shrink-0 bg-white border-b border-slate-200">
+                <div className="px-6 h-20 flex justify-between items-center">
+                    <input
+                        className="text-3xl font-bold text-slate-900 bg-transparent focus:outline-none focus:ring-0 border-none p-0 w-full placeholder:text-slate-400"
+                        value={survey.title}
+                        onChange={(e) => updateSurvey({ title: e.target.value })}
+                        placeholder="Untitled Survey"
+                    />
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                        <Button variant="secondary" onClick={() => setIsPreviewing(true)}>
+                            <Icon name={Eye} className="mr-2 h-4 w-4" /> Preview
+                        </Button>
+                        <Button onClick={() => updateSurvey({ status: 'published' })}>
+                            <Icon name={Share2} className="mr-2 h-4 w-4" /> Publish
+                        </Button>
+                        <button onClick={() => navigate('/')} className="p-2 text-slate-500 hover:text-slate-800 rounded-md transition-colors">
+                            <Icon name={LogOut} className="h-5 w-5" />
+                        </button>
+                    </div>
+                </div>
+                <nav className="px-6 flex gap-8">
+                    {['Editor', 'Settings', 'Share', 'Results'].map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab.toLowerCase())}
+                            className={`py-3 font-medium text-sm transition-colors border-b-2
+                                ${activeTab === tab.toLowerCase()
+                                    ? 'text-primary-600 border-primary-600'
+                                    : 'text-slate-500 hover:text-slate-800 border-transparent'}`
+                            }
+                        >
+                            {tab}
+                        </button>
+                    ))}
+                </nav>
+            </header>
+            <main className="flex-1 flex overflow-hidden">
+                <div className="flex-1 p-8 overflow-y-auto space-y-4">
+                    {survey.questions.map((q, index) => ( <QuestionEditor key={q.id} question={q} index={index} updateQuestion={updateQuestion} deleteQuestion={deleteQuestion} /> ))}
+                    {survey.questions.length === 0 && (
+                        <div className="text-center border-2 border-dashed border-slate-300 rounded-lg py-12">
+                            <FileText className="mx-auto h-12 w-12 text-slate-400" />
+                            <h3 className="mt-2 text-slate-700 font-semibold">Your survey is empty!</h3>
+                            <p className="text-slate-500 mt-1 text-sm">Add questions from the toolbox on the right.</p>
+                        </div>
+                    )}
+                </div>
+                <QuestionToolbox addQuestion={addQuestion} />
+            </main>
+        </div>
+    );
+};
+
+const QuestionToolbox: React.FC<{ addQuestion: (type: QuestionType) => void }> = ({ addQuestion }) => (
+    <div className="w-72 bg-white border-l border-slate-200/80 p-4 overflow-y-auto">
+        <h3 className="font-semibold text-slate-800 mb-4 px-1 text-base">Question Types</h3>
+        <div className="space-y-1">
+            {Object.entries(QUESTION_TYPE_CONFIG).map(([type, { name, icon }]) => (
+                <button key={type} onClick={() => addQuestion(type as QuestionType)} className="w-full flex items-center p-2.5 rounded-lg hover:bg-slate-100 transition-colors text-left">
+                    <Icon name={icon} className="h-5 w-5 mr-3 text-slate-500" />
+                    <span className="text-sm font-medium text-slate-700">{name}</span>
+                </button>
+            ))}
+        </div>
+    </div>
+);
+
+const QuestionEditor: React.FC<{ question: Question; index: number; updateQuestion: (qId: string, updatedProps: Partial<Question>) => void; deleteQuestion: (qId: string) => void; }> = ({ question, index, updateQuestion, deleteQuestion }) => {
+    const onUpdate = (props: Partial<Question>) => updateQuestion(question.id, props);
+
+    const OptionBasedBody = () => {
+        const updateOption = (optId: string, label: string) => onUpdate({ options: question.options?.map(o => o.id === optId ? { ...o, label } : o) });
+        const addOption = () => onUpdate({ options: [...(question.options || []), { id: String(Date.now()), label: `Option ${ (question.options?.length || 0) + 1}` }] });
+        const removeOption = (optId: string) => onUpdate({ options: question.options?.filter(o => o.id !== optId) });
+
+        return (
+            <div className="mt-4 space-y-2">
+                {question.options?.map(opt => (
+                    <div key={opt.id} className="flex items-center gap-2 group">
+                        <Input value={opt.label} onChange={e => updateOption(opt.id, e.target.value)} className="flex-grow text-sm !shadow-none !border-slate-200 hover:!border-slate-300"/>
+                        <button onClick={() => removeOption(opt.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                ))}
+                <Button variant="link" size="sm" onClick={addOption} className="!font-medium">Add Option</Button>
+            </div>
+        );
+    };
+
+    return (
+        <div className="p-6 bg-white border border-slate-200 rounded-lg relative group focus-within:border-primary-400">
+             <div className="flex justify-between items-start mb-2">
+                 <div className="flex items-start gap-3 w-full">
+                     <span className="text-sm font-semibold text-slate-500 mt-1">Q{index + 1}</span>
+                     <Input value={question.title} onChange={e => onUpdate({ title: e.target.value })} className="text-md font-semibold !p-1 bg-transparent !border-transparent hover:!border-slate-200 focus:!bg-white focus:!ring-2 focus:!ring-primary-200 focus:!border-primary-300 !shadow-none w-full" />
+                 </div>
+                 <Button variant="ghost" size="sm" onClick={() => deleteQuestion(question.id)} className="!p-1.5 opacity-0 group-hover:opacity-100">
+                     <Trash2 className="h-4 w-4 text-slate-500" />
+                 </Button>
+             </div>
+             
+             <div className="pl-9">
+                {(question.type === QuestionType.SingleChoice || question.type === QuestionType.MultipleChoice || question.type === QuestionType.Dropdown) && <OptionBasedBody />}
+                {question.type === QuestionType.Rating && (
+                    <div className="flex items-center gap-2 mt-3">
+                        <label className="text-sm text-slate-600">Scale:</label>
+                        <select value={question.scale} onChange={e => onUpdate({ scale: parseInt(e.target.value) })} className="rounded-md border-slate-300 text-sm focus:border-primary-400 focus:ring-primary-200 bg-white">
+                            <option value={3}>1-3</option>
+                            <option value={5}>1-5</option>
+                            <option value={7}>1-7</option>
+                            <option value={10}>1-10</option>
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <div className="border-t border-slate-200 mt-4 pt-3 flex justify-end">
+                 <label className="flex items-center text-sm text-slate-600 cursor-pointer">
+                    <input type="checkbox" checked={question.isRequired} onChange={e => onUpdate({ isRequired: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500" />
+                    <span className="ml-2 font-medium">Required</span>
+                </label>
+            </div>
+        </div>
+    );
+};
+
+const AnalyticsDashboard: React.FC = () => {
+    const { id } = useParams<{ id?: string }>();
+    const navigate = useNavigate();
+    const [surveys, setSurveys] = useState<Survey[]>([]);
+    const [responses, setResponses] = useState<SurveyResponse[]>([]);
+    const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(id || null);
+    
+    useEffect(() => {
+        api.getSurveys().then(data => {
+            setSurveys(data);
+            if (!id && data.length > 0) {
+                setSelectedSurveyId(data[0].id);
+            }
+        });
+    }, [id]);
+
+    useEffect(() => {
+        if (selectedSurveyId) {
+            api.getResponses(selectedSurveyId).then(setResponses);
+        }
+    }, [selectedSurveyId]);
+
+    const selectedSurvey = useMemo(() => surveys.find(s => s.id === selectedSurveyId), [surveys, selectedSurveyId]);
+    
+    const handleSurveyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newId = e.target.value;
+        setSelectedSurveyId(newId);
+        navigate(`/survey/${newId}/analytics`, { replace: true });
+    };
+
+    const getChartData = (question: Question) => {
+        if (!responses.length) return [];
+        if (question.type === QuestionType.SingleChoice) {
+            const counts: Record<string, number> = {};
+            question.options?.forEach(opt => counts[opt.label] = 0);
+            responses.forEach(r => { const answer = r.answers[question.id]; if (answer in counts) counts[answer]++; });
+            return Object.entries(counts).map(([name, value]) => ({ name, value }));
+        }
+        return [];
+    };
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-slate-800">Analytics</h1>
+                <div className="w-full max-w-xs">
+                    <select value={selectedSurveyId || ''} onChange={handleSurveyChange} className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm bg-white">
+                        <option value="" disabled>Select a survey...</option>
+                        {surveys.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+                    </select>
+                </div>
+            </div>
+            
+            {selectedSurvey && responses.length > 0 ? (
+                <div className="space-y-8">
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <Card className="p-5"><h3 className="text-slate-500 font-medium">Total Responses</h3><p className="text-3xl font-bold text-slate-800 mt-1">{responses.length}</p></Card>
+                        {/* Other Stat cards */}
+                     </div>
+                    {selectedSurvey.questions.map(q => (
+                        <Card key={q.id}>
+                            <div className="p-5 border-b border-slate-200">
+                                <h3 className="font-semibold text-lg text-slate-800">{q.title}</h3>
+                            </div>
+                            <div className="p-5">
+                                {q.type === QuestionType.SingleChoice && (
+                                    <ResponsiveContainer width="100%" height={300}>
+                                        <BarChart data={getChartData(q)} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                            <XAxis dataKey="name" stroke="#64748b" fontSize={12} />
+                                            <YAxis allowDecimals={false} stroke="#64748b" fontSize={12} />
+                                            <Tooltip cursor={{ fill: 'rgba(79, 70, 229, 0.1)' }} contentStyle={{backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '0.5rem'}} />
+                                            <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                )}
+                                {q.type === QuestionType.Paragraph && (
+                                    <div className="max-h-72 overflow-y-auto space-y-3 pr-2">
+                                      {responses.map(r => r.answers[q.id] && (
+                                        <div key={r.id} className="text-sm text-slate-800 bg-slate-50 p-3 rounded-md border border-slate-200">{r.answers[q.id]}</div>
+                                      ))}
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
+                    ))}
+                </div>
+            ) : (
+                <Card className="text-center py-16">
+                     {selectedSurveyId ? <FileText className="mx-auto h-12 w-12 text-slate-400" /> : <BarChart2 className="mx-auto h-12 w-12 text-slate-400" />}
+                    <p className="mt-2 text-slate-500">{selectedSurvey ? "No responses yet for this survey." : "Please select a survey to view analytics."}</p>
+                </Card>
+            )}
+        </div>
+    );
+};
+
+// --- SURVEY PREVIEW COMPONENTS ---
+
+const SurveyPreviewPage: React.FC<{ survey: Survey, onExitPreview: () => void }> = ({ survey, onExitPreview }) => {
+    return (
+        <div className="bg-slate-100 min-h-screen font-sans">
+            <header className="sticky top-0 bg-white/80 backdrop-blur-lg border-b z-10">
+                <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
+                    <p className="font-semibold text-slate-700 flex items-center gap-2"><Icon name={Eye} className="h-5 w-5" /> Preview Mode</p>
+                    <Button onClick={onExitPreview} variant="secondary">Exit Preview</Button>
+                </div>
+            </header>
+            <main className="max-w-2xl mx-auto my-8 p-8 bg-white rounded-lg shadow-sm">
+                <h1 className="text-3xl font-bold text-slate-900">{survey.title}</h1>
+                <p className="text-slate-600 mt-2">{survey.description}</p>
+                <div className="mt-10 space-y-8">
+                    {survey.questions.map((q, index) => (
+                        <QuestionPreview key={q.id} question={q} index={index} />
+                    ))}
+                </div>
+                <div className="mt-10 pt-6 border-t">
+                    <Button size="lg" className="w-full sm:w-auto">Submit Survey</Button>
+                </div>
+            </main>
+        </div>
+    );
+};
+
+const QuestionPreview: React.FC<{ question: Question, index: number }> = ({ question, index }) => {
+    const { type, title, isRequired, options, scale, statements, choices } = question;
+
+    const renderQuestionBody = () => {
+        switch (type) {
+            case QuestionType.SingleChoice:
+                return (
+                    <div className="space-y-3">
+                        {options?.map(opt => (
+                            <label key={opt.id} className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                                <input type="radio" name={question.id} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500" />
+                                <span className="ml-3 text-slate-800">{opt.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                );
+            case QuestionType.MultipleChoice:
+                return (
+                    <div className="space-y-3">
+                        {options?.map(opt => (
+                            <label key={opt.id} className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                                <input type="checkbox" name={question.id} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500 rounded" />
+                                <span className="ml-3 text-slate-800">{opt.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                );
+            case QuestionType.TextInput:
+                return <Input placeholder="Type your answer here..." />;
+            case QuestionType.Paragraph:
+                return <Textarea placeholder="Type your answer here..." rows={4} />;
+            case QuestionType.Dropdown:
+                return (
+                    <select className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm bg-white">
+                        <option value="">Select an option</option>
+                        {options?.map(opt => <option key={opt.id} value={opt.label}>{opt.label}</option>)}
+                    </select>
+                );
+            case QuestionType.Rating:
+                return (
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {[...Array(scale)].map((_, i) => (
+                            <div key={i} className="flex flex-col items-center group">
+                                <Star className="h-8 w-8 text-slate-300 hover:text-yellow-400 cursor-pointer transition-colors" />
+                                <span className="text-xs text-slate-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">{i+1}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            case QuestionType.Likert:
+                 return (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-center">
+                            <thead>
+                                <tr>
+                                    <th className="text-left"></th>
+                                    {choices?.map(c => <th key={c} className="text-sm font-medium text-slate-600 p-2">{c}</th>)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {statements?.map(s => (
+                                    <tr key={s} className="border-t">
+                                        <td className="text-left font-medium text-slate-800 p-2">{s}</td>
+                                        {choices?.map(c => (
+                                            <td key={c} className="p-2">
+                                                <input type="radio" name={`${question.id}-${s}`} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500" />
+                                            </td>
+                                        ))}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                );
+            default:
+                return <p className="text-sm text-slate-500 p-4 bg-slate-50 rounded-md border">Preview not available for this question type.</p>;
+        }
+    };
+
+    return (
+        <div className="border-t border-slate-200 pt-6 first:border-t-0 first:pt-0">
+            <label className="block text-md font-semibold text-slate-800">
+                {title} {isRequired && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <div className="mt-4">
+                {renderQuestionBody()}
+            </div>
+        </div>
+    );
+};
+
+// --- NEW PAGES ---
+const ResponsesPage: React.FC = () => {
+    const [surveys, setSurveys] = useState<Survey[]>([]);
+    const [responses, setResponses] = useState<SurveyResponse[]>([]);
+    const [selectedSurveyId, setSelectedSurveyId] = useState<string>('');
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        api.getSurveys().then(data => {
+            setSurveys(data);
+            if (data.length > 0) {
+                setSelectedSurveyId(data[0].id);
+            } else {
+                setIsLoading(false);
+            }
+        });
+    }, []);
+
+    useEffect(() => {
+        if (selectedSurveyId) {
+            setIsLoading(true);
+            api.getResponses(selectedSurveyId).then(data => {
+                setResponses(data);
+                setIsLoading(false);
+            });
+        }
+    }, [selectedSurveyId]);
+
+    const selectedSurveyTitle = surveys.find(s => s.id === selectedSurveyId)?.title || '...';
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-slate-800">Responses</h1>
+                {surveys.length > 0 && (
+                    <div className="w-full max-w-xs">
+                         <select value={selectedSurveyId} onChange={e => setSelectedSurveyId(e.target.value)} className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm bg-white">
+                            {surveys.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <Card>
+                 <div className="p-5 border-b border-slate-200">
+                    <h2 className="font-semibold text-slate-800">Responses for "{selectedSurveyTitle}"</h2>
+                </div>
+                 {isLoading ? (
+                    <div className="p-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-400" /></div>
+                ) : responses.length > 0 ? (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                    <th className="text-left font-semibold p-4">Response ID</th>
+                                    <th className="text-left font-semibold p-4">Submitted At</th>
+                                    <th className="p-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                               {responses.map(response => (
+                                   <tr key={response.id} className="border-b border-slate-200 last:border-b-0">
+                                       <td className="p-4 font-mono text-xs text-slate-600">{response.id}</td>
+                                       <td className="p-4 text-slate-600">{new Date(response.submittedAt).toLocaleString()}</td>
+                                       <td className="p-4 text-right"><Button variant="secondary" size="sm">View</Button></td>
+                                   </tr>
+                               ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p className="p-10 text-center text-slate-500">No responses found for this survey.</p>
+                )}
+            </Card>
+        </div>
+    );
+};
+
+const UsersPage: React.FC = () => {
+    const [users, setUsers] = useState<User[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        api.getUsers().then(data => {
+            setUsers(data);
+            setIsLoading(false);
+        });
+    }, []);
+
+    return (
+         <div>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-slate-800">User Management</h1>
+                <Button><Icon name={Plus} className="mr-2 h-4 w-4" /> Add User</Button>
+            </div>
+             <Card>
+                 <div className="p-5 border-b border-slate-200">
+                    <h2 className="font-semibold text-slate-800">All Users</h2>
+                </div>
+                 {isLoading ? (
+                    <div className="p-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-400" /></div>
+                 ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                    <th className="text-left font-semibold p-4">Name</th>
+                                    <th className="text-left font-semibold p-4">Email</th>
+                                    <th className="text-left font-semibold p-4">Role</th>
+                                    <th className="text-left font-semibold p-4">Joined</th>
+                                    <th className="p-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                               {users.map(user => (
+                                   <tr key={user.id} className="border-b border-slate-200 last:border-b-0">
+                                       <td className="p-4 font-medium text-slate-800 flex items-center gap-3">
+                                            <img src={user.profilePictureUrl} className="h-8 w-8 rounded-full" />
+                                            {user.name}
+                                       </td>
+                                       <td className="p-4 text-slate-600">{user.email}</td>
+                                       <td className="p-4 text-slate-600 capitalize">
+                                            <span className="flex items-center gap-2">
+                                                <Icon name={ROLE_CONFIG[user.role].icon} className="h-4 w-4 text-slate-400" />
+                                                {user.role}
+                                            </span>
+                                        </td>
+                                       <td className="p-4 text-slate-600">{new Date(user.createdAt).toLocaleDateString()}</td>
+                                       <td className="p-4 text-right">
+                                            <DropdownMenu trigger={<Button variant="ghost" size="sm" className="!px-2"><MoreHorizontal className="h-4 w-4" /></Button>}>
+                                                <DropdownMenuItem icon={Edit} onClick={() => {}}>Edit</DropdownMenuItem>
+                                                <DropdownMenuItem icon={Trash2} onClick={() => {}} className="text-red-600">Delete</DropdownMenuItem>
+                                            </DropdownMenu>
+                                       </td>
+                                   </tr>
+                               ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+        </div>
+    );
+};
+
+const SettingsPage: React.FC = () => {
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
+    const [activeTab, setActiveTab] = useState('profile');
+    const [formData, setFormData] = useState({ name: '', email: '' });
+
+    useEffect(() => {
+        api.getCurrentUser().then(user => {
+            setCurrentUser(user);
+            setFormData({ name: user.name, email: user.email });
+        });
+    }, []);
+
+    const handleUpdate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if(currentUser) {
+            const updatedUser = await api.updateUser(currentUser.id, { name: formData.name, email: formData.email });
+            setCurrentUser(updatedUser);
+            alert("Profile updated successfully!");
+        }
+    };
+
+    if (!currentUser) {
+        return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" /></div>;
+    }
+    
+    return (
+        <div>
+            <h1 className="text-3xl font-bold text-slate-800 mb-6">Settings</h1>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+                <div className="col-span-1">
+                     <nav className="space-y-1">
+                        <button onClick={() => setActiveTab('profile')} className={`w-full text-left flex items-center p-3 rounded-lg ${activeTab === 'profile' ? 'bg-primary-50 text-primary-700 font-semibold' : 'hover:bg-slate-100'}`}>
+                            <Icon name={UserIcon} className="mr-3"/> Profile
+                        </button>
+                         <button onClick={() => setActiveTab('app')} className={`w-full text-left flex items-center p-3 rounded-lg ${activeTab === 'app' ? 'bg-primary-50 text-primary-700 font-semibold' : 'hover:bg-slate-100'}`}>
+                            <Icon name={Settings} className="mr-3"/> Application
+                        </button>
+                    </nav>
+                </div>
+                <div className="col-span-3">
+                    <Card>
+                        {activeTab === 'profile' && (
+                            <form onSubmit={handleUpdate}>
+                                <div className="p-6 border-b">
+                                    <h3 className="text-lg font-semibold text-slate-800">Profile Information</h3>
+                                    <p className="text-sm text-slate-500 mt-1">Update your account's profile information and email address.</p>
+                                </div>
+                                <div className="p-6 space-y-4">
+                                    <div>
+                                        <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+                                        <Input id="name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                                        <Input id="email" type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 px-6 py-4 rounded-b-lg flex justify-end">
+                                    <Button type="submit">Save Changes</Button>
+                                </div>
+                            </form>
+                        )}
+                         {activeTab === 'app' && (
+                             <div className="p-6">
+                                <h3 className="text-lg font-semibold text-slate-800">Application Settings</h3>
+                                <p className="text-sm text-slate-500 mt-1">Global settings for the application will be here.</p>
+                            </div>
+                         )}
+                    </Card>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+const AppLayout: React.FC<{children: React.ReactNode}> = ({ children }) => {
+    const [isNavOpen, setNavOpen] = useState(false);
+    const [currentUser, setCurrentUser] = useState<User|null>(null);
+    const location = useLocation();
+    const isSurveyBuilderPage = location.pathname.includes('/survey/') && location.pathname.includes('/edit');
+
+    useEffect(() => {
+        api.getCurrentUser().then(setCurrentUser);
+    }, []);
+
+    return (
+         <div className="flex h-screen bg-slate-50">
+            <Sidebar navOpen={isNavOpen} setNavOpen={setNavOpen} currentUser={currentUser} />
+             <div className="flex-1 flex flex-col overflow-hidden">
+                {!isSurveyBuilderPage && <Header onNavToggle={() => setNavOpen(!isNavOpen)} />}
+                <main className={`flex-1 overflow-x-hidden overflow-y-auto ${isSurveyBuilderPage ? '' : 'p-6'}`}>
+                    {children}
+                </main>
+            </div>
+        </div>
+    );
+}
+
+export default function App() {
+    return (
+        <HashRouter>
+            <Routes>
+                {/* Survey Builder doesn't use the main AppLayout padding/header */}
+                <Route path="/survey/:id/edit" element={<SurveyBuilder />} />
+                
+                {/* All other routes use the main AppLayout */}
+                <Route path="/*" element={
+                    <AppLayout>
+                        <Routes>
+                            <Route path="/analytics" element={<AnalyticsDashboard />} />
+                            <Route path="/survey/:id/analytics" element={<AnalyticsDashboard />} />
+                            <Route path="/responses" element={<ResponsesPage />} />
+                            <Route path="/users" element={<UsersPage />} />
+                            <Route path="/settings" element={<SettingsPage />} />
+                            <Route path="/" element={<Dashboard />} />
+                        </Routes>
+                    </AppLayout>
+                } />
+            </Routes>
+        </HashRouter>
+    );
+}

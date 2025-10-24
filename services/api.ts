@@ -1,0 +1,189 @@
+import { Survey, SurveyResponse, User, Role, Question, QuestionType } from '../types';
+
+// --- MOCK DATABASE using localStorage ---
+const MOCK_DELAY = 300; // ms
+
+interface Database {
+  users: User[];
+  surveys: Survey[];
+  responses: SurveyResponse[];
+}
+
+const initializeDb = (): Database => {
+  const dbString = localStorage.getItem('surveySparrowDb');
+  if (dbString) {
+    try {
+      return JSON.parse(dbString);
+    } catch (e) {
+      console.error("Failed to parse DB from localStorage, resetting.", e);
+      localStorage.removeItem('surveySparrowDb');
+    }
+  }
+
+  const defaultUser: User = {
+    id: 'user-1',
+    name: 'Jane Doe',
+    email: 'jane.doe@example.com',
+    role: 'admin',
+    createdAt: new Date().toISOString(),
+    profilePictureUrl: `https://i.pravatar.cc/150?u=jane`,
+  };
+
+  const initialSurveys: Survey[] = [
+    {
+      id: '1',
+      title: 'Customer Satisfaction Survey Q2 2024',
+      description: 'Feedback on our products and services.',
+      status: 'published',
+      createdAt: '2024-06-15T10:00:00Z',
+      questions: [
+        { id: 'q1', type: QuestionType.SingleChoice, title: 'How would you rate our service?', isRequired: true, options: [{id: 'opt1', label: 'Very Satisfied'}, {id: 'opt2', label: 'Satisfied'}, {id: 'opt3', label: 'Neutral'}, {id: 'opt4', label: 'Unsatisfied'}] },
+        { id: 'q2', type: QuestionType.Paragraph, title: 'Any additional comments?', isRequired: false },
+        { id: 'q3', type: QuestionType.Rating, title: 'How would you rate our product quality?', isRequired: true, scale: 5 },
+      ],
+      responsesCount: 3,
+    },
+    {
+      id: '2',
+      title: 'Employee Engagement Survey',
+      description: 'Internal survey to measure employee morale.',
+      status: 'draft',
+      createdAt: '2024-07-01T11:00:00Z',
+       questions: [
+       { id: 'q3', type: QuestionType.Likert, title: 'Company Culture', isRequired: true, statements: ['I feel valued at work', 'I have opportunities for growth'], choices: ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'] },
+    ],
+      responsesCount: 0,
+    },
+     {
+      id: '3',
+      title: 'New Website Feedback',
+      description: 'Tell us what you think about our new website design.',
+      status: 'closed',
+      createdAt: '2024-05-10T14:00:00Z',
+      questions: [],
+      responsesCount: 342,
+    },
+  ];
+  
+  const initialResponses: SurveyResponse[] = [
+    { id: 'r1', surveyId: '1', submittedAt: '2024-06-20', answers: { q1: 'Very Satisfied', q2: 'The support team was very helpful!', q3: 4 } },
+    { id: 'r2', surveyId: '1', submittedAt: '2024-06-21', answers: { q1: 'Satisfied', q2: 'Excellent service as always.', q3: 5 } },
+    { id: 'r3', surveyId: '1', submittedAt: '2024-06-22', answers: { q1: 'Neutral', q2: 'The product is good but the delivery was slow.', q3: 3 } },
+  ];
+
+  const newDb: Database = {
+    users: [defaultUser],
+    surveys: initialSurveys,
+    responses: initialResponses,
+  };
+
+  localStorage.setItem('surveySparrowDb', JSON.stringify(newDb));
+  return newDb;
+};
+
+let db = initializeDb();
+
+const saveDb = () => {
+  localStorage.setItem('surveySparrowDb', JSON.stringify(db));
+};
+
+const simulateApi = <T>(data: T): Promise<T> => {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      resolve(JSON.parse(JSON.stringify(data))); // Deep copy to prevent mutation issues
+    }, MOCK_DELAY);
+  });
+};
+
+// --- AUTH API ---
+export const getCurrentUser = async (): Promise<User> => {
+  const user = db.users[0]; // Get the first user as the "logged in" user
+  if (!user) {
+      // This case should ideally not happen with initializeDb, but it's good practice
+      const fallbackUser: User = { id: 'fallback-user', name: 'Guest', email: 'guest@example.com', role: 'respondent', createdAt: new Date().toISOString() };
+      return simulateApi(fallbackUser);
+  }
+  return simulateApi(user);
+};
+
+// --- SURVEY API ---
+export const getSurveys = async (): Promise<Survey[]> => {
+  return simulateApi(db.surveys.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+};
+
+export const getSurvey = async (id: string): Promise<Survey | undefined> => {
+  return simulateApi(db.surveys.find(s => s.id === id));
+};
+
+export const createSurvey = async (surveyData: Omit<Survey, 'id' | 'responsesCount' | 'createdAt'>): Promise<Survey> => {
+    const newSurvey: Survey = {
+        id: String(Date.now()),
+        createdAt: new Date().toISOString(),
+        responsesCount: 0,
+        ...surveyData,
+    };
+    db.surveys.unshift(newSurvey);
+    saveDb();
+    return simulateApi(newSurvey);
+};
+
+export const updateSurvey = async (id: string, surveyData: Partial<Omit<Survey, 'id'>>): Promise<Survey> => {
+    let surveyToUpdate = db.surveys.find(s => s.id === id);
+    if (!surveyToUpdate) throw new Error("Survey not found");
+    
+    const updatedSurvey = { ...surveyToUpdate, ...surveyData };
+    db.surveys = db.surveys.map(s => s.id === id ? updatedSurvey : s);
+    saveDb();
+    return simulateApi(updatedSurvey);
+};
+
+export const deleteSurvey = async (id: string): Promise<void> => {
+    db.surveys = db.surveys.filter(s => s.id !== id);
+    db.responses = db.responses.filter(r => r.surveyId !== id);
+    saveDb();
+    return simulateApi(undefined);
+};
+
+// --- USER API ---
+export const getUsers = async (): Promise<User[]> => {
+    return simulateApi(db.users);
+};
+
+export const updateUser = async (id: string, userData: Partial<Omit<User, 'id'>>): Promise<User> => {
+    let userToUpdate = db.users.find(u => u.id === id);
+    if (!userToUpdate) throw new Error("User not found");
+
+    const updatedUser = { ...userToUpdate, ...userData };
+    db.users = db.users.map(u => u.id === id ? updatedUser : u);
+    saveDb();
+    return simulateApi(updatedUser);
+};
+
+export const addUser = async (userData: Omit<User, 'id' | 'createdAt'>): Promise<User> => {
+    const newUser: User = {
+        id: `user-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        profilePictureUrl: `https://i.pravatar.cc/150?u=${Date.now()}`,
+        ...userData,
+    };
+    db.users.push(newUser);
+    saveDb();
+    return simulateApi(newUser);
+};
+
+export const deleteUser = async (id: string): Promise<void> => {
+    if (db.users.length <= 1 || db.users[0].id === id) {
+        throw new Error("Cannot delete the primary admin user.");
+    }
+    db.users = db.users.filter(u => u.id !== id);
+    saveDb();
+    return simulateApi(undefined);
+};
+
+// --- RESPONSE API ---
+export const getResponses = async (surveyId?: string): Promise<SurveyResponse[]> => {
+  if (surveyId) {
+    return simulateApi(db.responses.filter(r => r.surveyId === surveyId));
+  }
+  return simulateApi(db.responses);
+};
