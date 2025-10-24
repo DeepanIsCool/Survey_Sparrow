@@ -1,7 +1,11 @@
+
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { HashRouter, Routes, Route, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Home, Plus, FileText, BarChart2, Users, Settings, LogOut, ChevronDown, Trash2, Edit, Move, Eye, Share2, MoreHorizontal, AlertTriangle, Wand2, Loader2, Sparkles, GripVertical, Check, MessageSquare, CheckSquare, Type as TypeIcon, Tally5, Star, AlignLeft, Calendar, Upload, Grip, List as ListIcon, Shield, User as UserIcon } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Survey, Question, QuestionType, SurveyResponse, User, Role } from './types';
 import { QUESTION_TYPE_CONFIG, ROLE_CONFIG } from './constants';
 import { generateSurveyFromPrompt } from './services/geminiService';
@@ -389,6 +393,23 @@ const SurveyBuilder: React.FC = () => {
         if (!survey) return;
         updateSurvey({ questions: survey.questions.filter(q => q.id !== qId) });
     };
+    
+    const sensors = useSensors(
+        useSensor(PointerSensor),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+    
+    const handleDragEnd = (event: { active: any, over: any }) => {
+        const { active, over } = event;
+        if (survey && over && active.id !== over.id) {
+            const oldIndex = survey.questions.findIndex((q) => q.id === active.id);
+            const newIndex = survey.questions.findIndex((q) => q.id === over.id);
+            const newQuestions = arrayMove(survey.questions, oldIndex, newIndex);
+            updateSurvey({ questions: newQuestions });
+        }
+    };
 
     if (!survey) {
         return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" /></div>;
@@ -437,21 +458,87 @@ const SurveyBuilder: React.FC = () => {
                 </nav>
             </header>
             <main className="flex-1 flex overflow-hidden">
-                <div className="flex-1 p-8 overflow-y-auto space-y-4">
-                    {survey.questions.map((q, index) => ( <QuestionEditor key={q.id} question={q} index={index} updateQuestion={updateQuestion} deleteQuestion={deleteQuestion} /> ))}
-                    {survey.questions.length === 0 && (
-                        <div className="text-center border-2 border-dashed border-slate-300 rounded-lg py-12">
-                            <FileText className="mx-auto h-12 w-12 text-slate-400" />
-                            <h3 className="mt-2 text-slate-700 font-semibold">Your survey is empty!</h3>
-                            <p className="text-slate-500 mt-1 text-sm">Add questions from the toolbox on the right.</p>
-                        </div>
-                    )}
-                </div>
-                <QuestionToolbox addQuestion={addQuestion} />
+                {activeTab === 'editor' && (
+                    <div className="flex-1 p-8 overflow-y-auto space-y-4">
+                        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                            <SortableContext items={survey.questions.map(q => q.id)} strategy={verticalListSortingStrategy}>
+                                {survey.questions.map((q, index) => (
+                                    <QuestionEditor key={q.id} question={q} index={index} updateQuestion={updateQuestion} deleteQuestion={deleteQuestion} />
+                                ))}
+                            </SortableContext>
+                        </DndContext>
+                        {survey.questions.length === 0 && (
+                            <div className="text-center border-2 border-dashed border-slate-300 rounded-lg py-12">
+                                <FileText className="mx-auto h-12 w-12 text-slate-400" />
+                                <h3 className="mt-2 text-slate-700 font-semibold">Your survey is empty!</h3>
+                                <p className="text-slate-500 mt-1 text-sm">Add questions from the toolbox on the right.</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+                {activeTab === 'settings' && <SurveySettingsTab survey={survey} updateSurvey={updateSurvey} />}
+                
+                {activeTab === 'editor' && <QuestionToolbox addQuestion={addQuestion} />}
             </main>
         </div>
     );
 };
+
+const SurveySettingsTab: React.FC<{ survey: Survey, updateSurvey: (updatedProps: Partial<Survey>) => void }> = ({ survey, updateSurvey }) => {
+    return (
+        <div className="flex-1 p-8 overflow-y-auto bg-slate-50">
+            <div className="max-w-3xl mx-auto space-y-6">
+                <Card>
+                    <div className="p-6">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Survey Description</label>
+                        <Textarea 
+                            value={survey.description || ''} 
+                            onChange={e => updateSurvey({ description: e.target.value })}
+                            placeholder="Provide a brief description for your survey."
+                            rows={3}
+                        />
+                    </div>
+                </Card>
+                 <Card>
+                    <div className="p-6">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Welcome Message</label>
+                        <p className="text-sm text-slate-500 mb-2">This message will be shown to respondents before they start.</p>
+                        <Textarea 
+                            value={survey.welcomeMessage || ''} 
+                            onChange={e => updateSurvey({ welcomeMessage: e.target.value })}
+                            placeholder="e.g., Welcome! Thank you for taking the time to complete this survey."
+                            rows={3}
+                        />
+                    </div>
+                </Card>
+                 <Card>
+                    <div className="p-6">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Thank You Message</label>
+                        <p className="text-sm text-slate-500 mb-2">This message will be shown after a respondent completes the survey.</p>
+                        <Textarea 
+                            value={survey.thankYouMessage || ''} 
+                            onChange={e => updateSurvey({ thankYouMessage: e.target.value })}
+                             placeholder="e.g., Thank you for your feedback! We appreciate your input."
+                            rows={3}
+                        />
+                    </div>
+                </Card>
+                <Card>
+                     <div className="flex items-center justify-between p-6">
+                        <div>
+                            <h3 className="font-medium text-slate-800">Anonymous Responses</h3>
+                            <p className="text-sm text-slate-500 mt-1">If enabled, respondent information will not be collected.</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" checked={survey.isAnonymous || false} onChange={e => updateSurvey({ isAnonymous: e.target.checked })} className="sr-only peer" />
+                            <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                        </label>
+                    </div>
+                </Card>
+            </div>
+        </div>
+    );
+}
 
 const QuestionToolbox: React.FC<{ addQuestion: (type: QuestionType) => void }> = ({ addQuestion }) => (
     <div className="w-72 bg-white border-l border-slate-200/80 p-4 overflow-y-auto">
@@ -468,6 +555,12 @@ const QuestionToolbox: React.FC<{ addQuestion: (type: QuestionType) => void }> =
 );
 
 const QuestionEditor: React.FC<{ question: Question; index: number; updateQuestion: (qId: string, updatedProps: Partial<Question>) => void; deleteQuestion: (qId: string) => void; }> = ({ question, index, updateQuestion, deleteQuestion }) => {
+    const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: question.id });
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+    };
+    
     const onUpdate = (props: Partial<Question>) => updateQuestion(question.id, props);
 
     const OptionBasedBody = () => {
@@ -489,10 +582,15 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
     };
 
     return (
-        <div className="p-6 bg-white border border-slate-200 rounded-lg relative group focus-within:border-primary-400">
+        <div ref={setNodeRef} style={style} className="p-6 bg-white border border-slate-200 rounded-lg relative group focus-within:border-primary-400">
              <div className="flex justify-between items-start mb-2">
                  <div className="flex items-start gap-3 w-full">
-                     <span className="text-sm font-semibold text-slate-500 mt-1">Q{index + 1}</span>
+                     <div className="flex items-center gap-2 mt-1 shrink-0">
+                         <button {...attributes} {...listeners} className="cursor-grab text-slate-400 hover:text-slate-600 p-0.5 rounded focus:outline-none focus:ring-2 focus:ring-primary-300">
+                             <GripVertical className="h-4 w-4" />
+                         </button>
+                         <span className="text-sm font-semibold text-slate-500">Q{index + 1}</span>
+                     </div>
                      <Input value={question.title} onChange={e => onUpdate({ title: e.target.value })} className="text-md font-semibold !p-1 bg-transparent !border-transparent hover:!border-slate-200 focus:!bg-white focus:!ring-2 focus:!ring-primary-200 focus:!border-primary-300 !shadow-none w-full" />
                  </div>
                  <Button variant="ghost" size="sm" onClick={() => deleteQuestion(question.id)} className="!p-1.5 opacity-0 group-hover:opacity-100">
@@ -500,7 +598,7 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
                  </Button>
              </div>
              
-             <div className="pl-9">
+             <div className="pl-14">
                 {(question.type === QuestionType.SingleChoice || question.type === QuestionType.MultipleChoice || question.type === QuestionType.Dropdown) && <OptionBasedBody />}
                 {question.type === QuestionType.Rating && (
                     <div className="flex items-center gap-2 mt-3">

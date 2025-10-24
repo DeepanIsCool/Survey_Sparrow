@@ -42,6 +42,9 @@ const initializeDb = (): Database => {
         { id: 'q3', type: QuestionType.Rating, title: 'How would you rate our product quality?', isRequired: true, scale: 5 },
       ],
       responsesCount: 3,
+      welcomeMessage: 'Welcome! Thanks for taking our survey.',
+      thankYouMessage: 'Thank you for your feedback!',
+      isAnonymous: false,
     },
     {
       id: '2',
@@ -120,6 +123,9 @@ export const createSurvey = async (surveyData: Omit<Survey, 'id' | 'responsesCou
         id: String(Date.now()),
         createdAt: new Date().toISOString(),
         responsesCount: 0,
+        welcomeMessage: '',
+        thankYouMessage: '',
+        isAnonymous: false,
         ...surveyData,
     };
     db.surveys.unshift(newSurvey);

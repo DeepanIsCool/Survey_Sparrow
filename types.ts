@@ -49,6 +49,9 @@ export interface Survey {
   createdAt: string;
   questions: Question[];
   responsesCount: number;
+  welcomeMessage?: string;
+  thankYouMessage?: string;
+  isAnonymous?: boolean;
 }
 
 export interface SurveyResponse {
