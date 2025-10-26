@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Home, Plus, FileText, BarChart2, Users, Settings, LogOut, ChevronDown, Trash2, Edit, Move, Eye, Share2, MoreHorizontal, AlertTriangle, Wand2, Loader2, Sparkles, GripVertical, Check, MessageSquare, CheckSquare, Type as TypeIcon, Tally5, Star, AlignLeft, Calendar, Upload, Grip, List as ListIcon, Shield, User as UserIcon, Sun, Moon, Laptop } from 'lucide-react';
+import { Home, Plus, FileText, BarChart2, Users, Settings, LogOut, ChevronDown, Trash2, Edit, Move, Eye, Share2, MoreHorizontal, AlertTriangle, Wand2, Loader2, Sparkles, GripVertical, Check, MessageSquare, CheckSquare, Type as TypeIcon, Tally5, Star, AlignLeft, Calendar, Upload, Grip, List as ListIcon, Shield, User as UserIcon, Sun, Moon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -13,7 +13,7 @@ import * as api from './services/api';
 
 // --- THEME PROVIDER ---
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark';
 
 interface ThemeContextType {
   theme: Theme;
@@ -25,18 +25,19 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const storedTheme = localStorage.getItem('survey-theme') as Theme | null;
-    return storedTheme || 'system';
+    if (storedTheme) {
+      return storedTheme;
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
 
   useEffect(() => {
     const root = window.document.documentElement;
-    const isDark =
-      theme === 'dark' ||
-      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-
-    root.classList.remove(isDark ? 'light' : 'dark');
-    root.classList.add(isDark ? 'dark' : 'light');
-    
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
     localStorage.setItem('survey-theme', theme);
   }, [theme]);
 
@@ -674,9 +675,7 @@ const AnalyticsDashboard: React.FC = () => {
     const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(id || null);
     const { theme } = useTheme();
     
-    const isDarkMode = useMemo(() =>
-        theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches),
-    [theme]);
+    const isDarkMode = useMemo(() => theme === 'dark', [theme]);
     
     useEffect(() => {
         api.getSurveys().then(data => {
@@ -1061,16 +1060,12 @@ const SettingsPage: React.FC = () => {
     if (!currentUser) {
         return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" /></div>;
     }
-    
-    const ThemeOptionButton: React.FC<{ value: Theme, icon: React.ElementType, label: string }> = ({ value, icon, label }) => (
-        <button
-            onClick={() => setTheme(value)}
-            className={`flex flex-col items-center justify-center p-4 border rounded-lg transition-colors ${theme === value ? 'border-primary-500 ring-2 ring-primary-200 bg-primary-50 dark:bg-primary-500/10 dark:border-primary-500' : 'border-slate-300 hover:border-slate-400 dark:border-slate-600 dark:hover:border-slate-500'}`}
-        >
-            <Icon name={icon} className={`h-6 w-6 mb-2 ${theme === value ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500 dark:text-slate-400'}`} />
-            <span className={`text-sm font-medium ${theme === value ? 'text-primary-700 dark:text-primary-300' : 'text-slate-700 dark:text-slate-300'}`}>{label}</span>
-        </button>
-    );
+
+    const isDarkMode = theme === 'dark';
+
+    const toggleTheme = () => {
+        setTheme(isDarkMode ? 'light' : 'dark');
+    };
 
     return (
         <div>
@@ -1116,10 +1111,20 @@ const SettingsPage: React.FC = () => {
                                     <p className="text-sm text-slate-500 mt-1 dark:text-slate-400">Choose how the application looks. This will be saved for your next visit.</p>
                                 </div>
                                 <div className="p-6">
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                        <ThemeOptionButton value="light" icon={Sun} label="Light" />
-                                        <ThemeOptionButton value="dark" icon={Moon} label="Dark" />
-                                        <ThemeOptionButton value="system" icon={Laptop} label="System" />
+                                     <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <Icon name={isDarkMode ? Moon : Sun} className="text-slate-500 dark:text-slate-400" />
+                                            <span className="font-medium text-slate-700 dark:text-slate-300">Dark Mode</span>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={isDarkMode}
+                                                onChange={toggleTheme}
+                                                className="sr-only peer"
+                                            />
+                                            <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:bg-slate-700 peer-checked:bg-primary-600"></div>
+                                        </label>
                                     </div>
                                 </div>
                              </>

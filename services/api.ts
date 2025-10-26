@@ -20,6 +20,7 @@ const initializeDb = (): Database => {
     }
   }
 
+  // A single default user is created for the app to function.
   const defaultUser: User = {
     id: 'user-1',
     name: 'Jane Doe',
@@ -29,50 +30,9 @@ const initializeDb = (): Database => {
     profilePictureUrl: `https://i.pravatar.cc/150?u=jane`,
   };
 
-  const initialSurveys: Survey[] = [
-    {
-      id: '1',
-      title: 'Customer Satisfaction Survey Q2 2024',
-      description: 'Feedback on our products and services.',
-      status: 'published',
-      createdAt: '2024-06-15T10:00:00Z',
-      questions: [
-        { id: 'q1', type: QuestionType.SingleChoice, title: 'How would you rate our service?', isRequired: true, options: [{id: 'opt1', label: 'Very Satisfied'}, {id: 'opt2', label: 'Satisfied'}, {id: 'opt3', label: 'Neutral'}, {id: 'opt4', label: 'Unsatisfied'}] },
-        { id: 'q2', type: QuestionType.Paragraph, title: 'Any additional comments?', isRequired: false },
-        { id: 'q3', type: QuestionType.Rating, title: 'How would you rate our product quality?', isRequired: true, scale: 5 },
-      ],
-      responsesCount: 3,
-      welcomeMessage: 'Welcome! Thanks for taking our survey.',
-      thankYouMessage: 'Thank you for your feedback!',
-      isAnonymous: false,
-    },
-    {
-      id: '2',
-      title: 'Employee Engagement Survey',
-      description: 'Internal survey to measure employee morale.',
-      status: 'draft',
-      createdAt: '2024-07-01T11:00:00Z',
-       questions: [
-       { id: 'q3', type: QuestionType.Likert, title: 'Company Culture', isRequired: true, statements: ['I feel valued at work', 'I have opportunities for growth'], choices: ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'] },
-    ],
-      responsesCount: 0,
-    },
-     {
-      id: '3',
-      title: 'New Website Feedback',
-      description: 'Tell us what you think about our new website design.',
-      status: 'closed',
-      createdAt: '2024-05-10T14:00:00Z',
-      questions: [],
-      responsesCount: 342,
-    },
-  ];
-  
-  const initialResponses: SurveyResponse[] = [
-    { id: 'r1', surveyId: '1', submittedAt: '2024-06-20', answers: { q1: 'Very Satisfied', q2: 'The support team was very helpful!', q3: 4 } },
-    { id: 'r2', surveyId: '1', submittedAt: '2024-06-21', answers: { q1: 'Satisfied', q2: 'Excellent service as always.', q3: 5 } },
-    { id: 'r3', surveyId: '1', submittedAt: '2024-06-22', answers: { q1: 'Neutral', q2: 'The product is good but the delivery was slow.', q3: 3 } },
-  ];
+  // Surveys and responses start as empty arrays.
+  const initialSurveys: Survey[] = [];
+  const initialResponses: SurveyResponse[] = [];
 
   const newDb: Database = {
     users: [defaultUser],
