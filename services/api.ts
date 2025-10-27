@@ -153,3 +153,25 @@ export const getResponses = async (surveyId?: string): Promise<SurveyResponse[]>
   }
   return simulateApi(db.responses);
 };
+
+export const addResponse = async (surveyId: string, answers: Record<string, any>): Promise<SurveyResponse> => {
+    const survey = db.surveys.find(s => s.id === surveyId);
+    if (!survey) {
+        throw new Error("Survey not found for this response");
+    }
+
+    const newResponse: SurveyResponse = {
+        id: `resp-${Date.now()}`,
+        surveyId,
+        submittedAt: new Date().toISOString(),
+        answers,
+    };
+
+    db.responses.push(newResponse);
+    survey.responsesCount += 1;
+    
+    db.surveys = db.surveys.map(s => s.id === surveyId ? { ...survey, responsesCount: survey.responsesCount } : s);
+    
+    saveDb();
+    return simulateApi(newResponse);
+};

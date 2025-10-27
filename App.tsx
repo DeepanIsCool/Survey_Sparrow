@@ -85,7 +85,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttribu
     <textarea ref={ref} {...props} className={`block w-full rounded-md border-slate-300 bg-white text-slate-900 shadow-sm focus:border-primary-400 focus:ring focus:ring-primary-200 focus:ring-opacity-50 sm:text-sm transition-shadow placeholder:text-slate-400 dark:bg-slate-900 dark:border-slate-600 dark:text-slate-50 dark:placeholder:text-slate-500 dark:focus:ring-primary-500/50 dark:focus:border-primary-500 ${props.className || ''}`} />
 ));
 
-const Card = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
+// FIX: Refactored Card component to use React.FC to resolve type inference issues with the children prop.
+const Card: React.FC<{ className?: string }> = ({ children, className = '' }) => (
     <div className={`bg-white rounded-lg border border-slate-200 dark:bg-slate-800 dark:border-slate-700 ${className}`}>
         {children}
     </div>
@@ -211,11 +212,14 @@ const Logo = () => (
 const Sidebar: React.FC<{navOpen: boolean, setNavOpen: (open: boolean) => void, currentUser: User | null}> = ({navOpen, setNavOpen, currentUser}) => {
     const location = useLocation();
 
-    const NavLink = ({ to, icon, children }: { to: string; icon: React.ElementType; children: React.ReactNode }) => {
-        const isActive = location.pathname === to || (to === '/analytics' && location.pathname.startsWith('/survey/'));
+    // FIX: Refactored NavLink component to use React.FC to resolve type inference issues with the children prop.
+    const NavLink: React.FC<{ to: string; icon: React.ElementType }> = ({ to, icon, children }) => {
+        const isActive = location.pathname.startsWith(to) && to !== '/';
+        const isDashboard = location.pathname === '/';
+        const finalIsActive = to === '/' ? isDashboard : isActive;
         return (
-            <Link to={to} onClick={() => setNavOpen(false)} className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-md transition-colors ${isActive ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800'}`}>
-                <Icon name={icon} className={`mr-3 h-5 w-5 ${isActive ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500'}`} />
+            <Link to={to} onClick={() => setNavOpen(false)} className={`flex items-center px-3 py-2.5 text-sm font-medium rounded-md transition-colors ${finalIsActive ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800'}`}>
+                <Icon name={icon} className={`mr-3 h-5 w-5 ${finalIsActive ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500'}`} />
                 <span>{children}</span>
             </Link>
         );
@@ -390,12 +394,63 @@ const Dashboard: React.FC = () => {
     );
 };
 
+const ShareModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  surveyLink: string;
+}> = ({ isOpen, onClose, surveyLink }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(surveyLink).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      setCopied(false);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-60 transition-opacity dark:bg-opacity-80" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg m-4 transform transition-all dark:bg-slate-800" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-700 mb-4">
+          <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2 dark:text-slate-100">
+            <Icon name={Share2} className="text-primary-500 h-6 w-6" />
+            Share Your Survey
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 rounded-full p-1 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:hover:text-slate-300">&times;</button>
+        </div>
+        <p className="text-slate-600 dark:text-slate-400 mb-4 text-sm">Your survey is live! Anyone with the link can now respond.</p>
+        
+        <div className="flex gap-2">
+            <Input readOnly value={surveyLink} className="flex-grow"/>
+            <Button onClick={handleCopy} className="w-28">
+                {copied ? <><Icon name={Check} className="mr-2 h-4 w-4" /> Copied!</> : 'Copy Link'}
+            </Button>
+        </div>
+        
+        <div className="mt-6 flex justify-end">
+          <Button variant="secondary" onClick={onClose}>Done</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 const SurveyBuilder: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const [survey, setSurvey] = useState<Survey | null>(null);
     const [activeTab, setActiveTab] = useState('editor');
     const [isPreviewing, setIsPreviewing] = useState(false);
+    const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
     useEffect(() => {
         if (id) {
@@ -454,10 +509,28 @@ const SurveyBuilder: React.FC = () => {
             updateSurvey({ questions: newQuestions });
         }
     };
+    
+    const handlePublish = async () => {
+        if (!survey) return;
+        
+        const invalidQuestion = survey.questions.find(q => q.title.trim() === '');
+        if (invalidQuestion) {
+            const questionIndex = survey.questions.findIndex(q => q.id === invalidQuestion.id) + 1;
+            alert(`Cannot publish: Question ${questionIndex} has an empty title.`);
+            return;
+        }
+
+        if (survey.status !== 'published') {
+            await updateSurvey({ status: 'published' });
+        }
+        setIsShareModalOpen(true);
+    };
 
     if (!survey) {
         return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" /></div>;
     }
+    
+    const surveyLink = `${window.location.origin}${window.location.pathname.split('#')[0]}#/take/${survey?.id}`;
 
     if (isPreviewing) {
         return <SurveyPreviewPage survey={survey} onExitPreview={() => setIsPreviewing(false)} />;
@@ -477,8 +550,9 @@ const SurveyBuilder: React.FC = () => {
                         <Button variant="secondary" onClick={() => setIsPreviewing(true)}>
                             <Icon name={Eye} className="mr-2 h-4 w-4" /> Preview
                         </Button>
-                        <Button onClick={() => updateSurvey({ status: 'published' })}>
-                            <Icon name={Share2} className="mr-2 h-4 w-4" /> Publish
+                        <Button onClick={handlePublish}>
+                            <Icon name={Share2} className="mr-2 h-4 w-4" /> 
+                            {survey.status === 'published' ? 'Share' : 'Publish'}
                         </Button>
                         <button onClick={() => navigate('/')} className="p-2 text-slate-500 hover:text-slate-800 rounded-md transition-colors dark:text-slate-400 dark:hover:text-slate-100">
                             <Icon name={LogOut} className="h-5 w-5" />
@@ -524,6 +598,7 @@ const SurveyBuilder: React.FC = () => {
                 
                 {activeTab === 'editor' && <QuestionToolbox addQuestion={addQuestion} />}
             </main>
+            <ShareModal isOpen={isShareModalOpen} onClose={() => setIsShareModalOpen(false)} surveyLink={surveyLink} />
         </div>
     );
 };
@@ -604,8 +679,25 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
         transform: CSS.Transform.toString(transform),
         transition,
     };
+    const [isTitleInvalid, setIsTitleInvalid] = useState(false);
     
     const onUpdate = (props: Partial<Question>) => updateQuestion(question.id, props);
+
+    const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newTitle = e.target.value;
+        onUpdate({ title: newTitle });
+        if (newTitle.trim() !== '') {
+            setIsTitleInvalid(false);
+        }
+    };
+
+    const handleTitleBlur = () => {
+        if (question.title.trim() === '') {
+            setIsTitleInvalid(true);
+        } else {
+            setIsTitleInvalid(false);
+        }
+    };
 
     const OptionBasedBody = () => {
         const updateOption = (optId: string, label: string) => onUpdate({ options: question.options?.map(o => o.id === optId ? { ...o, label } : o) });
@@ -626,7 +718,7 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
     };
 
     return (
-        <div ref={setNodeRef} style={style} className="p-6 bg-white border border-slate-200 rounded-lg relative group focus-within:border-primary-400 dark:bg-slate-800 dark:border-slate-700 dark:focus-within:border-primary-500">
+        <div ref={setNodeRef} style={style} className={`p-6 bg-white border rounded-lg relative group focus-within:border-primary-400 dark:bg-slate-800 dark:focus-within:border-primary-500 transition-colors ${isTitleInvalid ? 'border-red-400 dark:border-red-500' : 'border-slate-200 dark:border-slate-700'}`}>
              <div className="flex justify-between items-start mb-2">
                  <div className="flex items-start gap-3 w-full">
                      <div className="flex items-center gap-2 mt-1 shrink-0">
@@ -635,13 +727,19 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
                          </button>
                          <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Q{index + 1}</span>
                      </div>
-                     <Input value={question.title} onChange={e => onUpdate({ title: e.target.value })} className="text-md font-semibold !p-1 bg-transparent !border-transparent hover:!border-slate-200 focus:!bg-white focus:!ring-2 focus:!ring-primary-200 focus:!border-primary-300 !shadow-none w-full dark:hover:!border-slate-600 dark:focus:!bg-slate-900" />
+                     <Input 
+                        value={question.title} 
+                        onChange={handleTitleChange} 
+                        onBlur={handleTitleBlur}
+                        className={`text-md font-semibold !p-1 bg-transparent !border-transparent hover:!border-slate-200 focus:!bg-white focus:!ring-2 focus:!border-primary-300 !shadow-none w-full dark:hover:!border-slate-600 dark:focus:!bg-slate-900 ${isTitleInvalid ? 'focus:!ring-red-200' : 'focus:!ring-primary-200'}`} />
                  </div>
                  <Button variant="ghost" size="sm" onClick={() => deleteQuestion(question.id)} className="!p-1.5 opacity-0 group-hover:opacity-100">
                      <Trash2 className="h-4 w-4 text-slate-500" />
                  </Button>
              </div>
              
+             {isTitleInvalid && <p className="text-xs text-red-500 mt-1 pl-14">Question title cannot be empty.</p>}
+
              <div className="pl-14">
                 {(question.type === QuestionType.SingleChoice || question.type === QuestionType.MultipleChoice || question.type === QuestionType.Dropdown) && <OptionBasedBody />}
                 {question.type === QuestionType.Rating && (
@@ -657,7 +755,19 @@ const QuestionEditor: React.FC<{ question: Question; index: number; updateQuesti
                 )}
             </div>
 
-            <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-3 flex justify-end">
+            <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-3 flex justify-between items-center">
+                 <div className="w-40">
+                    {question.type === QuestionType.TextInput && (
+                        <select
+                            value={question.validation || ''}
+                            onChange={e => onUpdate({ validation: e.target.value as 'email' | undefined })}
+                            className="w-full text-xs rounded-md border-slate-300 shadow-sm focus:border-primary-400 focus:ring-primary-200 bg-white dark:bg-slate-700 dark:border-slate-500 dark:text-slate-200"
+                        >
+                            <option value="">No Validation</option>
+                            <option value="email">Email Address</option>
+                        </select>
+                    )}
+                 </div>
                  <label className="flex items-center text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
                     <input type="checkbox" checked={question.isRequired} onChange={e => onUpdate({ isRequired: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 dark:bg-slate-900 dark:border-slate-600 dark:checked:bg-primary-500" />
                     <span className="ml-2 font-medium">Required</span>
@@ -681,10 +791,12 @@ const AnalyticsDashboard: React.FC = () => {
         api.getSurveys().then(data => {
             setSurveys(data);
             if (!id && data.length > 0) {
-                setSelectedSurveyId(data[0].id);
+                const newId = data[0].id;
+                setSelectedSurveyId(newId);
+                navigate(`/survey/${newId}/analytics`, { replace: true });
             }
         });
-    }, [id]);
+    }, [id, navigate]);
 
     useEffect(() => {
         if (selectedSurveyId) {
@@ -827,7 +939,7 @@ const QuestionPreview: React.FC<{ question: Question, index: number }> = ({ ques
                     </div>
                 );
             case QuestionType.TextInput:
-                return <Input placeholder="Type your answer here..." />;
+                return <Input type={question.validation === 'email' ? 'email' : 'text'} placeholder="Type your answer here..." />;
             case QuestionType.Paragraph:
                 return <Textarea placeholder="Type your answer here..." rows={4} />;
             case QuestionType.Dropdown:
@@ -1136,6 +1248,237 @@ const SettingsPage: React.FC = () => {
     );
 };
 
+const SurveyTakePage: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    const [survey, setSurvey] = useState<Survey | null>(null);
+    const [answers, setAnswers] = useState<Record<string, any>>({});
+    const [errors, setErrors] = useState<Record<string, string>>({});
+    const [submissionState, setSubmissionState] = useState<'form' | 'submitting' | 'submitted'>('form');
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        if (id) {
+            api.getSurvey(id).then(data => {
+                if (data && data.status === 'published') {
+                    setSurvey(data);
+                } else {
+                    setError('This survey is not available. It might be a draft or has been closed.');
+                }
+                setIsLoading(false);
+            });
+        }
+    }, [id]);
+    
+    const handleAnswerChange = (questionId: string, value: any) => {
+        setAnswers(prev => ({...prev, [questionId]: value}));
+        if (errors[questionId]) {
+            setErrors(prev => {
+                const newErrors = {...prev};
+                delete newErrors[questionId];
+                return newErrors;
+            });
+        }
+    };
+    
+    const handleMultiChoiceChange = (questionId: string, optionLabel: string, isChecked: boolean) => {
+        const currentAnswers = answers[questionId] as string[] || [];
+        const newAnswers = isChecked
+            ? [...currentAnswers, optionLabel]
+            : currentAnswers.filter(label => label !== optionLabel);
+        handleAnswerChange(questionId, newAnswers);
+    };
+
+    const validate = (): Record<string, string> => {
+        if (!survey) return {};
+        const newErrors: Record<string, string> = {};
+        for (const q of survey.questions) {
+            const answer = answers[q.id];
+            
+            if (q.isRequired && (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0))) {
+                newErrors[q.id] = 'This field is required.';
+            } else if (q.type === QuestionType.TextInput && q.validation === 'email' && answer && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(answer))) {
+                newErrors[q.id] = 'Please enter a valid email address.';
+            }
+        }
+        return newErrors;
+    };
+
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!survey) return;
+
+        const validationErrors = validate();
+        setErrors(validationErrors);
+        
+        if (Object.keys(validationErrors).length > 0) {
+            const firstErrorId = Object.keys(validationErrors)[0];
+            const element = document.getElementById(`question-${firstErrorId}`);
+            element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+        
+        setSubmissionState('submitting');
+        try {
+            await api.addResponse(survey.id, answers);
+            setSubmissionState('submitted');
+        } catch (err) {
+            alert("There was an error submitting your response. Please try again.");
+            setSubmissionState('form');
+        }
+    };
+
+    if (isLoading) {
+        return <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900"><Loader2 className="h-8 w-8 animate-spin text-primary-500" /></div>;
+    }
+    
+    if (error) {
+        return <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-center p-4">
+            <Card className="p-8 max-w-lg">
+                <AlertTriangle className="mx-auto h-12 w-12 text-yellow-500" />
+                <h2 className="mt-4 text-xl font-semibold text-slate-800 dark:text-slate-100">Survey Not Found</h2>
+                <p className="mt-2 text-slate-600 dark:text-slate-400">{error}</p>
+                <Button onClick={() => window.location.href = '/'} className="mt-6">Go to Homepage</Button>
+            </Card>
+        </div>;
+    }
+
+    if (!survey) return null;
+
+    if (submissionState === 'submitted') {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-center p-4">
+                <Card className="p-12 max-w-lg">
+                    <Check className="mx-auto h-16 w-16 text-green-500 bg-green-100 rounded-full p-3 dark:bg-green-900/50" />
+                    <h1 className="text-2xl font-bold text-slate-900 mt-6 dark:text-slate-100">Thank You!</h1>
+                    <p className="text-slate-600 mt-2 dark:text-slate-300">{survey.thankYouMessage || 'Your response has been submitted successfully.'}</p>
+                </Card>
+            </div>
+        );
+    }
+    
+    const QuestionTake: React.FC<{ question: Question, error?: string }> = ({ question, error }) => {
+        const { id, type, title, isRequired, options, scale, statements, choices } = question;
+        const value = answers[id];
+        
+        const renderBody = () => {
+             switch (type) {
+                case QuestionType.SingleChoice:
+                    return (
+                        <div className="space-y-3">
+                            {options?.map(opt => (
+                                <label key={opt.id} className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-slate-50 transition-colors dark:border-slate-600 dark:hover:bg-slate-700 has-[:checked]:bg-primary-50 has-[:checked]:border-primary-300 dark:has-[:checked]:bg-primary-900/20 dark:has-[:checked]:border-primary-500">
+                                    <input type="radio" name={id} value={opt.label} checked={value === opt.label} onChange={(e) => handleAnswerChange(id, e.target.value)} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500 dark:bg-slate-700 dark:border-slate-500" />
+                                    <span className="ml-3 text-slate-800 dark:text-slate-200">{opt.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    );
+                case QuestionType.MultipleChoice:
+                     return (
+                        <div className="space-y-3">
+                            {options?.map(opt => (
+                                <label key={opt.id} className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-slate-50 transition-colors dark:border-slate-600 dark:hover:bg-slate-700 has-[:checked]:bg-primary-50 has-[:checked]:border-primary-300 dark:has-[:checked]:bg-primary-900/20 dark:has-[:checked]:border-primary-500">
+                                    <input type="checkbox" name={id} value={opt.label} checked={(value as string[] || []).includes(opt.label)} onChange={e => handleMultiChoiceChange(id, opt.label, e.target.checked)} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500 rounded dark:bg-slate-700 dark:border-slate-500" />
+                                    <span className="ml-3 text-slate-800 dark:text-slate-200">{opt.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    );
+                case QuestionType.TextInput:
+                    return <Input type={question.validation === 'email' ? 'email' : 'text'} placeholder="Type your answer here..." value={value || ''} onChange={e => handleAnswerChange(id, e.target.value)} />;
+                case QuestionType.Paragraph:
+                    return <Textarea placeholder="Type your answer here..." rows={4} value={value || ''} onChange={e => handleAnswerChange(id, e.target.value)} />;
+                case QuestionType.Dropdown:
+                    return (
+                        <select value={value || ''} onChange={e => handleAnswerChange(id, e.target.value)} className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-200">
+                            <option value="">Select an option</option>
+                            {options?.map(opt => <option key={opt.id} value={opt.label}>{opt.label}</option>)}
+                        </select>
+                    );
+                case QuestionType.Rating:
+                    return (
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {[...Array(scale)].map((_, i) => (
+                                <label key={i} className="flex flex-col items-center group cursor-pointer">
+                                    <input type="radio" name={id} value={i+1} checked={value === i+1} onChange={e => handleAnswerChange(id, Number(e.target.value))} className="sr-only peer"/>
+                                    <Star className={`h-8 w-8 transition-colors text-slate-300 peer-hover:text-yellow-400 peer-checked:text-yellow-400 dark:text-slate-600 dark:peer-hover:text-yellow-400 dark:peer-checked:text-yellow-400 ${value >= i+1 ? 'text-yellow-400 dark:text-yellow-400' : ''}`} />
+                                    <span className="text-xs text-slate-500 mt-1 opacity-0 group-hover:opacity-100 peer-checked:opacity-100 transition-opacity dark:text-slate-400">{i+1}</span>
+                                </label>
+                            ))}
+                        </div>
+                    );
+                case QuestionType.Likert:
+                    return (
+                        <div className="overflow-x-auto -mt-2">
+                           <table className="w-full text-center">
+                               <thead>
+                                   <tr>
+                                       <th className="text-left"></th>
+                                       {choices?.map(c => <th key={c} className="text-sm font-medium text-slate-600 p-2 dark:text-slate-400">{c}</th>)}
+                                   </tr>
+                               </thead>
+                               <tbody>
+                                   {statements?.map(s => (
+                                       <tr key={s} className="border-t dark:border-slate-700">
+                                           <td className="text-left font-medium text-slate-800 p-2 dark:text-slate-200">{s}</td>
+                                           {choices?.map(c => (
+                                               <td key={c} className="p-2">
+                                                   <input type="radio" name={`${id}-${s}`} value={c} checked={answers[`${id}-${s}`] === c} onChange={(e) => handleAnswerChange(`${id}-${s}`, e.target.value)} className="h-4 w-4 text-primary-600 border-slate-300 focus:ring-primary-500 dark:bg-slate-700 dark:border-slate-500" />
+                                               </td>
+                                           ))}
+                                       </tr>
+                                   ))}
+                               </tbody>
+                           </table>
+                        </div>
+                    );
+                default:
+                    return <p className="text-sm text-slate-500 p-4 bg-slate-50 rounded-md border dark:bg-slate-700 dark:border-slate-600 dark:text-slate-400">This question type is not available for responding.</p>;
+            }
+        };
+
+        return (
+            <div id={`question-${id}`} className="border-t border-slate-200 pt-6 first:border-t-0 first:pt-0 dark:border-slate-700">
+                <label className="block text-md font-semibold text-slate-800 dark:text-slate-100">
+                    {title} {isRequired && <span className="text-red-500 ml-1">*</span>}
+                </label>
+                <div className="mt-4">
+                    {renderBody()}
+                    {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="bg-slate-100 min-h-screen font-sans dark:bg-slate-900">
+            <main className="max-w-2xl mx-auto my-8 p-8 bg-white rounded-lg shadow-sm dark:bg-slate-800">
+                {survey.welcomeMessage && (
+                    <div className="mb-8 p-4 bg-slate-50 border border-slate-200 rounded-lg dark:bg-slate-700/50 dark:border-slate-700">
+                        <p className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{survey.welcomeMessage}</p>
+                    </div>
+                )}
+                <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">{survey.title}</h1>
+                <p className="text-slate-600 mt-2 dark:text-slate-300 whitespace-pre-wrap">{survey.description}</p>
+                <div className="mt-10 space-y-8">
+                    {survey.questions.map((q) => (
+                        <QuestionTake key={q.id} question={q} error={errors[q.id]} />
+                    ))}
+                </div>
+                <div className="mt-10 pt-6 border-t dark:border-slate-700">
+                    <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={submissionState === 'submitting'}>
+                        {submissionState === 'submitting' ? (
+                            <> <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting... </>
+                        ) : 'Submit Survey'}
+                    </Button>
+                </div>
+            </main>
+        </form>
+    );
+};
+
 
 const AppLayout: React.FC<{children: React.ReactNode}> = ({ children }) => {
     const [isNavOpen, setNavOpen] = useState(false);
@@ -1165,6 +1508,9 @@ export default function App() {
         <ThemeProvider>
             <HashRouter>
                 <Routes>
+                    {/* Public survey taking page, does not use AppLayout */}
+                    <Route path="/take/:id" element={<SurveyTakePage />} />
+
                     {/* Survey Builder doesn't use the main AppLayout padding/header */}
                     <Route path="/survey/:id/edit" element={<SurveyBuilder />} />
                     

@@ -39,6 +39,7 @@ export interface Question {
   choices?: string[]; // For Likert type
   rows?: MatrixRow[]; // For Matrix type
   columns?: MatrixColumn[]; // For Matrix type
+  validation?: 'email';
 }
 
 export interface Survey {
